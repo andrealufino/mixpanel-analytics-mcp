@@ -7,12 +7,19 @@
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "postinstall": "npm run build"
   },
-  "keywords": ["mixpanel", "mcp", "analytics", "api", "model-context-protocol"],
+  "keywords": [
+    "mixpanel",
+    "mcp",
+    "analytics",
+    "api",
+    "model-context-protocol"
+  ],
   "author": "Andrea Mario Lufino <andrea@andrealufino.com>",
   "license": "MIT",
   "description": "Mixpanel Analytics MCP - Query Mixpanel analytics through Claude via Model Context Protocol",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",
+    "tslib": "^2.8.1",
     "zod": "^3.24.2"
   },
   "devDependencies": {

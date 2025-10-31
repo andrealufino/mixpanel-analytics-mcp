@@ -46,14 +46,14 @@ class Config {
    * Service account credentials for Mixpanel authentication.
    */
   static credentials = {
-    username: process.env.SERVICE_ACCOUNT_USER_NAME || "",
-    password: process.env.SERVICE_ACCOUNT_PASSWORD || "",
+    username: process.env["SERVICE_ACCOUNT_USER_NAME"] || "",
+    password: process.env["SERVICE_ACCOUNT_PASSWORD"] || "",
   };
 
   /**
    * Default Mixpanel project ID for queries.
    */
-  static defaultProjectId = process.env.DEFAULT_PROJECT_ID || "";
+  static defaultProjectId = process.env["DEFAULT_PROJECT_ID"] || "";
 
   /**
    * Mixpanel API base URL.
@@ -61,7 +61,7 @@ class Config {
    * Set MIXPANEL_API_BASE_URL environment variable for US cluster.
    */
   static apiBaseUrl =
-    process.env.MIXPANEL_API_BASE_URL || "https://eu.mixpanel.com/api";
+    process.env["MIXPANEL_API_BASE_URL"] || "https://eu.mixpanel.com/api";
 
   /**
    * Validates configuration on initialization.
@@ -98,9 +98,9 @@ class Config {
 // Parse command-line arguments as fallback for credentials
 const args = process.argv.slice(2);
 if (args.length > 0) {
-  Config.credentials.username = args[0];
-  Config.credentials.password = args[1];
-  Config.defaultProjectId = args[2];
+  Config.credentials.username = args[0] || "";
+  Config.credentials.password = args[1] || "";
+  Config.defaultProjectId = args[2] || "";
 }
 
 // Validate configuration
@@ -411,10 +411,10 @@ server.tool(
       };
 
       if (interval) {
-        params.interval = interval;
+        params["interval"] = interval;
       } else {
-        params.from_date = fromDate;
-        params.to_date = toDate;
+        params["from_date"] = fromDate;
+        params["to_date"] = toDate;
       }
 
       const data = await client.get("/query/events", params);
@@ -500,18 +500,18 @@ server.tool(
       };
 
       if (values) {
-        params.values = values;
+        params["values"] = values;
       }
 
       if (interval) {
-        params.interval = interval;
+        params["interval"] = interval;
       } else {
-        params.from_date = fromDate;
-        params.to_date = toDate;
+        params["from_date"] = fromDate;
+        params["to_date"] = toDate;
       }
 
       if (limit) {
-        params.limit = limit;
+        params["limit"] = limit;
       }
 
       const data = await client.get("/query/events/properties", params);
@@ -555,10 +555,10 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (limit) {
-        params.limit = limit;
+        params["limit"] = limit;
       }
 
       const data = await client.get("/query/events/properties/top", params);
@@ -610,10 +610,10 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (limit) {
-        params.limit = limit;
+        params["limit"] = limit;
       }
 
       const data = await client.get(
@@ -680,7 +680,7 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
 
       const data = await client.get("/query/stream/query", params);
@@ -805,7 +805,7 @@ server.tool(
         project_id: projectId,
       };
       if (workspaceId) {
-        queryParams.workspace_id = workspaceId;
+        queryParams["workspace_id"] = workspaceId;
       }
 
       const data = await client.post("/query/engage", formData, queryParams);
@@ -908,37 +908,37 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (retentionType) {
-        params.retention_type = retentionType;
+        params["retention_type"] = retentionType;
       }
       if (bornEvent) {
-        params.born_event = bornEvent;
+        params["born_event"] = bornEvent;
       }
       if (event) {
-        params.event = event;
+        params["event"] = event;
       }
       if (bornWhere) {
-        params.born_where = bornWhere;
+        params["born_where"] = bornWhere;
       }
       if (returnWhere) {
-        params.where = returnWhere;
+        params["where"] = returnWhere;
       }
       if (interval) {
-        params.interval = interval;
+        params["interval"] = interval;
       }
       if (intervalCount) {
-        params.interval_count = intervalCount;
+        params["interval_count"] = intervalCount;
       }
       if (unit) {
-        params.unit = unit;
+        params["unit"] = unit;
       }
       if (on) {
-        params.on = on;
+        params["on"] = on;
       }
       if (limit) {
-        params.limit = limit;
+        params["limit"] = limit;
       }
 
       const data = await client.get("/query/retention", params);
@@ -1014,19 +1014,19 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (event) {
-        params.event = event;
+        params["event"] = event;
       }
       if (where) {
-        params.where = where;
+        params["where"] = where;
       }
       if (on) {
-        params.on = on;
+        params["on"] = on;
       }
       if (limit) {
-        params.limit = limit;
+        params["limit"] = limit;
       }
 
       const data = await client.get("/query/retention/addiction", params);
@@ -1120,28 +1120,28 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (on) {
-        params.on = on;
+        params["on"] = on;
       }
       if (unit) {
-        params.unit = unit;
+        params["unit"] = unit;
       }
       if (interval !== undefined) {
-        params.interval = interval;
+        params["interval"] = interval;
       }
       if (where) {
-        params.where = where;
+        params["where"] = where;
       }
       if (limit !== undefined) {
-        params.limit = limit;
+        params["limit"] = limit;
       }
       if (type) {
-        params.type = type;
+        params["type"] = type;
       }
       if (format) {
-        params.format = format;
+        params["format"] = format;
       }
 
       const data = await client.get("/query/segmentation", params);
@@ -1215,16 +1215,16 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (unit) {
-        params.unit = unit;
+        params["unit"] = unit;
       }
       if (where) {
-        params.where = where;
+        params["where"] = where;
       }
       if (type) {
-        params.type = type;
+        params["type"] = type;
       }
 
       const data = await client.get("/query/segmentation/numeric", params);
@@ -1293,13 +1293,13 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (unit) {
-        params.unit = unit;
+        params["unit"] = unit;
       }
       if (where) {
-        params.where = where;
+        params["where"] = where;
       }
 
       const data = await client.get("/query/segmentation/average", params);
@@ -1368,13 +1368,13 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (unit) {
-        params.unit = unit;
+        params["unit"] = unit;
       }
       if (where) {
-        params.where = where;
+        params["where"] = where;
       }
 
       const data = await client.get("/query/segmentation/sum", params);
@@ -1451,19 +1451,19 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
       if (length) {
-        params.length = length;
+        params["length"] = length;
       }
       if (lengthUnit) {
-        params.length_unit = lengthUnit;
+        params["length_unit"] = lengthUnit;
       }
       if (interval) {
-        params.interval = interval;
+        params["interval"] = interval;
       }
       if (unit) {
-        params.unit = unit;
+        params["unit"] = unit;
       }
 
       const data = await client.get("/query/funnels", params);
@@ -1498,7 +1498,7 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
 
       const data = await client.get("/query/funnels/list", params);
@@ -1533,7 +1533,7 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
 
       const data = await client.get("/query/cohorts/list", params);
@@ -1576,7 +1576,7 @@ server.tool(
       };
 
       if (workspaceId) {
-        params.workspace_id = workspaceId;
+        params["workspace_id"] = workspaceId;
       }
 
       const data = await client.get("/query/insights", params);
@@ -1626,7 +1626,7 @@ server.tool(
         project_id: projectId,
       };
       if (workspaceId) {
-        queryParams.workspace_id = workspaceId;
+        queryParams["workspace_id"] = workspaceId;
       }
 
       const data = await client.post("/query/jql", formData, queryParams);
