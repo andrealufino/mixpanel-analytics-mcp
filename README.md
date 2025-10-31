@@ -1,6 +1,8 @@
-# Mixpanel MCP Server
+# Mixpanel Analytics MCP
 
 Query your Mixpanel analytics data directly from Claude. Access events, retention, funnels, cohorts, and more through natural language.
+
+**Note:** This is an unofficial project and is not affiliated with Mixpanel.
 
 ## Installation
 

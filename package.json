@@ -1,5 +1,5 @@
 {
-  "name": "mcp-mixpanel",
+  "name": "mixpanel-analytics-mcp",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -10,7 +10,7 @@
   "keywords": ["mixpanel", "mcp", "analytics", "api", "model-context-protocol"],
   "author": "Andrea Mario Lufino <andrea@andrealufino.com>",
   "license": "MIT",
-  "description": "Mixpanel MCP Server - Model Context Protocol server for Mixpanel Analytics API",
+  "description": "Mixpanel Analytics MCP - Query Mixpanel analytics through Claude via Model Context Protocol",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",
     "zod": "^3.24.2"
@@ -21,7 +21,7 @@
   },
   "type": "module",
   "bin": {
-    "mcp-mixpanel": "./build/index.js"
+    "mixpanel-analytics-mcp": "./build/index.js"
   },
   "files": [
     "build"

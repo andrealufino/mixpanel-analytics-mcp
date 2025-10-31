@@ -1,8 +1,8 @@
-# Mixpanel MCP Server Architecture
+# Mixpanel Analytics MCP Architecture
 
 ## Overview
 
-The Mixpanel MCP Server is a TypeScript-based Model Context Protocol (MCP) server that provides comprehensive access to the Mixpanel Analytics API. It enables MCP clients (such as Claude Desktop or Cursor) to query Mixpanel data through a set of well-organized, type-safe tools.
+The Mixpanel Analytics MCP is a TypeScript-based Model Context Protocol (MCP) server that provides comprehensive access to the Mixpanel Analytics API. It enables MCP clients (such as Claude Desktop or Claude Code) to query Mixpanel data through a set of well-organized, type-safe tools.
 
 ## Design Principles
 
