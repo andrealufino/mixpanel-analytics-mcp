@@ -57,11 +57,11 @@ class Config {
 
   /**
    * Mixpanel API base URL.
-   * Defaults to EU cluster (https://eu.mixpanel.com/api).
+   * Defaults to EU cluster (https://eu.mixpanel.com/api/).
    * Set MIXPANEL_API_BASE_URL environment variable for US cluster.
    */
   static apiBaseUrl =
-    process.env["MIXPANEL_API_BASE_URL"] || "https://eu.mixpanel.com/api";
+    (process.env["MIXPANEL_API_BASE_URL"] || "https://eu.mixpanel.com/api").replace(/\/$/, "") + "/";
 
   /**
    * Validates configuration on initialization.
@@ -140,7 +140,7 @@ class MixpanelClient {
     endpoint: string,
     queryParams?: Record<string, string | number | boolean | undefined>
   ): Promise<unknown> {
-    const url = new URL(endpoint, Config.apiBaseUrl);
+    const url = new URL(endpoint.replace(/^\//, ""), Config.apiBaseUrl);
 
     if (queryParams) {
       Object.entries(queryParams).forEach(([key, value]) => {
@@ -182,7 +182,7 @@ class MixpanelClient {
     body: URLSearchParams,
     queryParams?: Record<string, string | number | boolean | undefined>
   ): Promise<unknown> {
-    const url = new URL(endpoint, Config.apiBaseUrl);
+    const url = new URL(endpoint.replace(/^\//, ""), Config.apiBaseUrl);
 
     if (queryParams) {
       Object.entries(queryParams).forEach(([key, value]) => {
