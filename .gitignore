@@ -92,6 +92,11 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 CLAUDE.md
 .claudeconfig
 
+# Test files
+test-*.js
+test-*.ts
+*.test.js
+
 # Gatsby files
 # Comment in the public line in if your project uses Gatsby and not Next.js
 # https://nextjs.org/blog/next-9-1#public-directory-support
