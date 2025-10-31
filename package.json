@@ -1,0 +1,29 @@
+{
+  "name": "mcp-mixpanel",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "postinstall": "npm run build"
+  },
+  "keywords": ["mixpanel", "mcp", "analytics", "api", "model-context-protocol"],
+  "author": "Andrea Mario Lufino <andrea@andrealufino.com>",
+  "license": "MIT",
+  "description": "Mixpanel MCP Server - Model Context Protocol server for Mixpanel Analytics API",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.13",
+    "typescript": "^5.8.2"
+  },
+  "type": "module",
+  "bin": {
+    "mcp-mixpanel": "./build/index.js"
+  },
+  "files": [
+    "build"
+  ]
+}
