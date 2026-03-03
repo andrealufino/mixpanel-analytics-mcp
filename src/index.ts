@@ -12,6 +12,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createRequire } from "node:module";
 import { z } from "zod";
 
 
@@ -29,6 +30,14 @@ interface ToolResponse extends Record<string, unknown> {
   }>;
   isError?: boolean;
 }
+
+/**
+ * Zod schema for date strings in yyyy-mm-dd format.
+ * Shared across all tools that accept date parameters.
+ */
+const dateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in yyyy-mm-dd format");
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,7 +74,7 @@ class Config {
 
   /**
    * Validates configuration on initialization.
-   * Warns if placeholder or empty credentials are detected.
+   * Exits if credentials are missing or incomplete.
    */
   static validate(): void {
     const args = process.argv.slice(2);
@@ -82,14 +91,19 @@ class Config {
       process.exit(1);
     }
 
-    if (
-      !this.credentials.username ||
-      !this.credentials.password ||
-      !this.defaultProjectId
-    ) {
+    if (!this.credentials.username || !this.credentials.password) {
+      console.error(
+        "Error: Both SERVICE_ACCOUNT_USER_NAME and SERVICE_ACCOUNT_PASSWORD must be provided.\n" +
+        `Got username: ${this.credentials.username ? "yes" : "missing"}, ` +
+        `password: ${this.credentials.password ? "yes" : "missing"}.`
+      );
+      process.exit(1);
+    }
+
+    if (!this.defaultProjectId) {
       console.warn(
-        "Warning: Incomplete Mixpanel credentials. " +
-        "Some functionality may be limited."
+        "Warning: DEFAULT_PROJECT_ID not set. " +
+        "You will need to provide projectId for every tool call."
       );
     }
   }
@@ -98,9 +112,15 @@ class Config {
 // Parse command-line arguments as fallback for credentials
 const args = process.argv.slice(2);
 if (args.length > 0) {
-  Config.credentials.username = args[0] || "";
-  Config.credentials.password = args[1] || "";
-  Config.defaultProjectId = args[2] || "";
+  if (args[0]) {
+    Config.credentials.username = args[0];
+  }
+  if (args[1]) {
+    Config.credentials.password = args[1];
+  }
+  if (args[2]) {
+    Config.defaultProjectId = args[2];
+  }
 }
 
 // Validate configuration
@@ -119,27 +139,40 @@ Config.validate();
  */
 class MixpanelClient {
   /**
-   * Creates authentication header using HTTP Basic Auth.
+   * Default request timeout in milliseconds.
+   */
+  static readonly REQUEST_TIMEOUT_MS = 30_000;
+
+  /**
+   * Cached Base64-encoded authorization header value.
+   * Computed once on first use since credentials do not change at runtime.
+   */
+  private cachedAuth: string | undefined;
+
+  /**
+   * Returns the Base64-encoded authorization header, computing and caching on first call.
    *
    * @returns Base64-encoded authorization header value
    */
-  private createAuthHeaders(): string {
-    const credentials = `${Config.credentials.username}:${Config.credentials.password}`;
-    return Buffer.from(credentials).toString("base64");
+  private getAuthHeader(): string {
+    if (this.cachedAuth === undefined) {
+      const credentials = `${Config.credentials.username}:${Config.credentials.password}`;
+      this.cachedAuth = Buffer.from(credentials).toString("base64");
+    }
+    return this.cachedAuth;
   }
 
   /**
-   * Executes a GET request to the Mixpanel API.
+   * Constructs a URL with query parameters appended.
    *
    * @param endpoint - API endpoint path (relative to base URL)
    * @param queryParams - URL query parameters
-   * @returns Parsed JSON response from API
-   * @throws Error if the API request fails
+   * @returns Fully constructed URL
    */
-  async get(
+  private buildUrl(
     endpoint: string,
     queryParams?: Record<string, string | number | boolean | undefined>
-  ): Promise<unknown> {
+  ): URL {
     const url = new URL(endpoint.replace(/^\//, ""), Config.apiBaseUrl);
 
     if (queryParams) {
@@ -150,22 +183,49 @@ class MixpanelClient {
       });
     }
 
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        accept: "application/json",
-        authorization: `Basic ${this.createAuthHeaders()}`,
-      },
-    });
+    return url;
+  }
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Mixpanel API request failed with status ${response.status}: ${errorText}`
-      );
+  /**
+   * Executes a GET request to the Mixpanel API.
+   *
+   * @param endpoint - API endpoint path (relative to base URL)
+   * @param queryParams - URL query parameters
+   * @returns Parsed JSON response from API
+   * @throws Error if the API request fails or times out
+   */
+  async get(
+    endpoint: string,
+    queryParams?: Record<string, string | number | boolean | undefined>
+  ): Promise<unknown> {
+    const url = this.buildUrl(endpoint, queryParams);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      MixpanelClient.REQUEST_TIMEOUT_MS
+    );
+
+    try {
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          authorization: `Basic ${this.getAuthHeader()}`,
+        },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Mixpanel API request failed with status ${response.status}: ${errorText}`
+        );
+      }
+
+      return response.json();
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    return response.json();
   }
 
   /**
@@ -175,41 +235,43 @@ class MixpanelClient {
    * @param body - Form-encoded request body
    * @param queryParams - URL query parameters
    * @returns Parsed JSON response from API
-   * @throws Error if the API request fails
+   * @throws Error if the API request fails or times out
    */
   async post(
     endpoint: string,
     body: URLSearchParams,
     queryParams?: Record<string, string | number | boolean | undefined>
   ): Promise<unknown> {
-    const url = new URL(endpoint.replace(/^\//, ""), Config.apiBaseUrl);
+    const url = this.buildUrl(endpoint, queryParams);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      MixpanelClient.REQUEST_TIMEOUT_MS
+    );
 
-    if (queryParams) {
-      Object.entries(queryParams).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== "") {
-          url.searchParams.append(key, String(value));
-        }
+    try {
+      const response = await fetch(url.toString(), {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: `Basic ${this.getAuthHeader()}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: body,
+        signal: controller.signal,
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Mixpanel API request failed with status ${response.status}: ${errorText}`
+        );
+      }
+
+      return response.json();
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    const response = await fetch(url.toString(), {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        authorization: `Basic ${this.createAuthHeaders()}`,
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      body: body,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Mixpanel API request failed with status ${response.status}: ${errorText}`
-      );
-    }
-
-    return response.json();
   }
 
   /**
@@ -221,8 +283,12 @@ class MixpanelClient {
    */
   handleError(error: unknown, contextMessage: string): ToolResponse {
     console.error(`${contextMessage}:`, error);
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    let errorMessage: string;
+    if (error instanceof Error && error.name === "AbortError") {
+      errorMessage = `Request timed out after ${MixpanelClient.REQUEST_TIMEOUT_MS / 1000} seconds`;
+    } else {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
     return {
       content: [
         {
@@ -245,7 +311,7 @@ class MixpanelClient {
       content: [
         {
           type: "text",
-          text: JSON.stringify(data),
+          text: JSON.stringify(data, null, 2),
         },
       ],
     };
@@ -257,12 +323,78 @@ const client = new MixpanelClient();
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MARK: - Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Builds a record of query parameters, filtering out undefined values.
+ * Replaces repetitive conditional assignment blocks across all tools.
+ *
+ * @param mapping - Key-value pairs where values may be undefined
+ * @returns Record containing only defined values
+ */
+function buildParams(
+  mapping: Record<string, string | number | boolean | undefined>
+): Record<string, string | number | boolean> {
+  const result: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(mapping)) {
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Builds URLSearchParams from a mapping, filtering out undefined values.
+ * Used for POST request bodies.
+ *
+ * @param mapping - Key-value pairs where values may be undefined
+ * @returns URLSearchParams containing only defined values
+ */
+function buildFormData(
+  mapping: Record<string, string | number | boolean | undefined>
+): URLSearchParams {
+  const formData = new URLSearchParams();
+  for (const [key, value] of Object.entries(mapping)) {
+    if (value !== undefined) {
+      formData.append(key, String(value));
+    }
+  }
+  return formData;
+}
+
+/**
+ * Validates that either interval or both date range bounds are provided.
+ *
+ * @param interval - Number of time units
+ * @param fromDate - Start date string
+ * @param toDate - End date string
+ * @throws Error if neither interval nor a complete date range is provided
+ */
+function validateIntervalOrDates(
+  interval: number | undefined,
+  fromDate: string | undefined,
+  toDate: string | undefined
+): void {
+  if (interval === undefined && (!fromDate || !toDate)) {
+    throw new Error(
+      "You must specify either interval or both fromDate and toDate"
+    );
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MARK: - Server Initialization
 // ─────────────────────────────────────────────────────────────────────────────
 
+const _require = createRequire(import.meta.url);
+const pkg = _require("../package.json") as { version: string };
+
 const server = new McpServer({
   name: "mixpanel",
-  version: "1.0.0",
+  version: pkg.version,
 });
 
 
@@ -378,12 +510,10 @@ server.tool(
       .number()
       .describe("Number of units to return. Use either interval or dates.")
       .optional(),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive). Use with toDate.")
       .optional(),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive). Use with fromDate.")
       .optional(),
   },
@@ -397,25 +527,17 @@ server.tool(
     toDate,
   }) => {
     try {
-      if (!interval && (!fromDate || !toDate)) {
-        throw new Error(
-          "You must specify either interval or both fromDate and toDate"
-        );
-      }
+      validateIntervalOrDates(interval, fromDate, toDate);
 
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
         type,
         unit,
         event,
-      };
-
-      if (interval) {
-        params["interval"] = interval;
-      } else {
-        params["from_date"] = fromDate;
-        params["to_date"] = toDate;
-      }
+        interval,
+        from_date: interval === undefined ? fromDate : undefined,
+        to_date: interval === undefined ? toDate : undefined,
+      });
 
       const data = await client.get("/query/events", params);
       return client.formatSuccess(data);
@@ -459,12 +581,10 @@ server.tool(
       .number()
       .describe("Number of units. Use either interval or dates.")
       .optional(),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format. Use with toDate.")
       .optional(),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format. Use with fromDate.")
       .optional(),
     limit: z
@@ -485,39 +605,25 @@ server.tool(
     limit,
   }) => {
     try {
-      if (!interval && (!fromDate || !toDate)) {
-        throw new Error(
-          "You must specify either interval or both fromDate and toDate"
-        );
-      }
+      validateIntervalOrDates(interval, fromDate, toDate);
 
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
         event,
         name,
         type,
         unit,
-      };
-
-      if (values) {
-        params["values"] = values;
-      }
-
-      if (interval) {
-        params["interval"] = interval;
-      } else {
-        params["from_date"] = fromDate;
-        params["to_date"] = toDate;
-      }
-
-      if (limit) {
-        params["limit"] = limit;
-      }
+        values,
+        limit,
+        interval,
+        from_date: interval === undefined ? fromDate : undefined,
+        to_date: interval === undefined ? toDate : undefined,
+      });
 
       const data = await client.get("/query/events/properties", params);
       return client.formatSuccess(data);
     } catch (error) {
-      return client.handleError(error, "Error fetching event property values");
+      return client.handleError(error, "Error fetching aggregated event property values");
     }
   }
 );
@@ -533,7 +639,7 @@ server.tool(
   {
     projectId: z
       .string()
-      .describe("The Mixpanel project ID")
+      .describe("The Mixpanel project ID. Optional since it has a default.")
       .optional(),
     workspaceId: z
       .string()
@@ -549,17 +655,12 @@ server.tool(
   },
   async ({ projectId = Config.defaultProjectId, workspaceId, event, limit }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         event,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (limit) {
-        params["limit"] = limit;
-      }
+        limit,
+      });
 
       const data = await client.get("/query/events/properties/top", params);
       return client.formatSuccess(data);
@@ -580,7 +681,7 @@ server.tool(
   {
     projectId: z
       .string()
-      .describe("The Mixpanel project ID")
+      .describe("The Mixpanel project ID. Optional since it has a default.")
       .optional(),
     workspaceId: z
       .string()
@@ -603,23 +704,15 @@ server.tool(
     limit,
   }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         event,
         name,
-      };
+        limit,
+      });
 
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (limit) {
-        params["limit"] = limit;
-      }
-
-      const data = await client.get(
-        "/query/events/properties/values",
-        params
-      );
+      const data = await client.get("/query/events/properties/values", params);
       return client.formatSuccess(data);
     } catch (error) {
       return client.handleError(
@@ -657,11 +750,9 @@ server.tool(
       .describe(
         'JSON array of distinct IDs. Example: "[\\"12a34aa567eb8d-9ab1c26f345b67-89123c45-6aeaa7-89f12af345f678\\"]"'
       ),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive)"),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive)"),
   },
   async ({
@@ -672,16 +763,13 @@ server.tool(
     toDate,
   }) => {
     try {
-      const params: Record<string, string | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         distinct_ids: distinctIds,
         from_date: fromDate,
         to_date: toDate,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
+      });
 
       const data = await client.get("/query/stream/query", params);
       return client.formatSuccess(data);
@@ -765,48 +853,24 @@ server.tool(
     includeAllUsers,
   }) => {
     try {
-      const formData = new URLSearchParams();
+      const formData = buildFormData({
+        distinct_id: distinctId,
+        distinct_ids: distinctIds,
+        data_group_id: dataGroupId,
+        where,
+        output_properties: outputProperties,
+        session_id: sessionId,
+        page,
+        behaviors,
+        as_of_timestamp: asOfTimestamp,
+        filter_by_cohort: filterByCohort,
+        include_all_users: includeAllUsers,
+      });
 
-      if (distinctId) {
-        formData.append("distinct_id", distinctId);
-      }
-      if (distinctIds) {
-        formData.append("distinct_ids", distinctIds);
-      }
-      if (dataGroupId) {
-        formData.append("data_group_id", dataGroupId);
-      }
-      if (where) {
-        formData.append("where", where);
-      }
-      if (outputProperties) {
-        formData.append("output_properties", outputProperties);
-      }
-      if (sessionId) {
-        formData.append("session_id", sessionId);
-      }
-      if (page !== undefined) {
-        formData.append("page", page.toString());
-      }
-      if (behaviors !== undefined) {
-        formData.append("behaviors", behaviors.toString());
-      }
-      if (asOfTimestamp !== undefined) {
-        formData.append("as_of_timestamp", asOfTimestamp.toString());
-      }
-      if (filterByCohort) {
-        formData.append("filter_by_cohort", filterByCohort);
-      }
-      if (includeAllUsers !== undefined) {
-        formData.append("include_all_users", includeAllUsers.toString());
-      }
-
-      const queryParams: Record<string, string | undefined> = {
+      const queryParams = buildParams({
         project_id: projectId,
-      };
-      if (workspaceId) {
-        queryParams["workspace_id"] = workspaceId;
-      }
+        workspace_id: workspaceId,
+      });
 
       const data = await client.post("/query/engage", formData, queryParams);
       return client.formatSuccess(data);
@@ -838,11 +902,9 @@ server.tool(
       .string()
       .describe("The workspace ID if applicable")
       .optional(),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive)"),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive)"),
     retentionType: z
       .enum(["birth", "compounded"])
@@ -901,45 +963,22 @@ server.tool(
     limit,
   }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         from_date: fromDate,
         to_date: toDate,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (retentionType) {
-        params["retention_type"] = retentionType;
-      }
-      if (bornEvent) {
-        params["born_event"] = bornEvent;
-      }
-      if (event) {
-        params["event"] = event;
-      }
-      if (bornWhere) {
-        params["born_where"] = bornWhere;
-      }
-      if (returnWhere) {
-        params["where"] = returnWhere;
-      }
-      if (interval) {
-        params["interval"] = interval;
-      }
-      if (intervalCount) {
-        params["interval_count"] = intervalCount;
-      }
-      if (unit) {
-        params["unit"] = unit;
-      }
-      if (on) {
-        params["on"] = on;
-      }
-      if (limit) {
-        params["limit"] = limit;
-      }
+        retention_type: retentionType,
+        born_event: bornEvent,
+        event,
+        born_where: bornWhere,
+        where: returnWhere,
+        interval,
+        interval_count: intervalCount,
+        unit,
+        on,
+        limit,
+      });
 
       const data = await client.get("/query/retention", params);
       return client.formatSuccess(data);
@@ -966,11 +1005,9 @@ server.tool(
       .string()
       .describe("The workspace ID if applicable")
       .optional(),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive)"),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive)"),
     unit: z
       .enum(["day", "week", "month"])
@@ -1005,29 +1042,18 @@ server.tool(
     limit,
   }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         from_date: fromDate,
         to_date: toDate,
         unit,
         addiction_unit: addictionUnit,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (event) {
-        params["event"] = event;
-      }
-      if (where) {
-        params["where"] = where;
-      }
-      if (on) {
-        params["on"] = on;
-      }
-      if (limit) {
-        params["limit"] = limit;
-      }
+        event,
+        where,
+        on,
+        limit,
+      });
 
       const data = await client.get("/query/retention/addiction", params);
       return client.formatSuccess(data);
@@ -1062,11 +1088,9 @@ server.tool(
     event: z
       .string()
       .describe("The event name (single event, not an array)"),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive)"),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive)"),
     on: z
       .string()
@@ -1112,37 +1136,20 @@ server.tool(
     format,
   }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         event,
         from_date: fromDate,
         to_date: toDate,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (on) {
-        params["on"] = on;
-      }
-      if (unit) {
-        params["unit"] = unit;
-      }
-      if (interval !== undefined) {
-        params["interval"] = interval;
-      }
-      if (where) {
-        params["where"] = where;
-      }
-      if (limit !== undefined) {
-        params["limit"] = limit;
-      }
-      if (type) {
-        params["type"] = type;
-      }
-      if (format) {
-        params["format"] = format;
-      }
+        on,
+        unit,
+        interval,
+        where,
+        limit,
+        type,
+        format,
+      });
 
       const data = await client.get("/query/segmentation", params);
       return client.formatSuccess(data);
@@ -1172,11 +1179,9 @@ server.tool(
     event: z
       .string()
       .describe("The event name (single event, not an array)"),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive)"),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive)"),
     on: z
       .string()
@@ -1206,26 +1211,17 @@ server.tool(
     type,
   }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         event,
         from_date: fromDate,
         to_date: toDate,
         on,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (unit) {
-        params["unit"] = unit;
-      }
-      if (where) {
-        params["where"] = where;
-      }
-      if (type) {
-        params["type"] = type;
-      }
+        unit,
+        where,
+        type,
+      });
 
       const data = await client.get("/query/segmentation/numeric", params);
       return client.formatSuccess(data);
@@ -1255,11 +1251,9 @@ server.tool(
     event: z
       .string()
       .describe("The event name (single event, not an array)"),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive)"),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive)"),
     on: z
       .string()
@@ -1284,23 +1278,16 @@ server.tool(
     where,
   }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         event,
         from_date: fromDate,
         to_date: toDate,
         on,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (unit) {
-        params["unit"] = unit;
-      }
-      if (where) {
-        params["where"] = where;
-      }
+        unit,
+        where,
+      });
 
       const data = await client.get("/query/segmentation/average", params);
       return client.formatSuccess(data);
@@ -1330,11 +1317,9 @@ server.tool(
     event: z
       .string()
       .describe("The event name (single event, not an array)"),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive)"),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive)"),
     on: z
       .string()
@@ -1359,23 +1344,16 @@ server.tool(
     where,
   }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         event,
         from_date: fromDate,
         to_date: toDate,
         on,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (unit) {
-        params["unit"] = unit;
-      }
-      if (where) {
-        params["where"] = where;
-      }
+        unit,
+        where,
+      });
 
       const data = await client.get("/query/segmentation/sum", params);
       return client.formatSuccess(data);
@@ -1408,11 +1386,9 @@ server.tool(
       .describe("The workspace ID if applicable")
       .optional(),
     funnelId: z.string().describe("The funnel ID to query"),
-    fromDate: z
-      .string()
+    fromDate: dateSchema
       .describe("Start date in yyyy-mm-dd format (inclusive)"),
-    toDate: z
-      .string()
+    toDate: dateSchema
       .describe("End date in yyyy-mm-dd format (inclusive)"),
     length: z
       .number()
@@ -1443,28 +1419,17 @@ server.tool(
     unit,
   }) => {
     try {
-      const params: Record<string, string | number | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         funnel_id: funnelId,
         from_date: fromDate,
         to_date: toDate,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
-      if (length) {
-        params["length"] = length;
-      }
-      if (lengthUnit) {
-        params["length_unit"] = lengthUnit;
-      }
-      if (interval) {
-        params["interval"] = interval;
-      }
-      if (unit) {
-        params["unit"] = unit;
-      }
+        length,
+        length_unit: lengthUnit,
+        interval,
+        unit,
+      });
 
       const data = await client.get("/query/funnels", params);
       return client.formatSuccess(data);
@@ -1493,13 +1458,10 @@ server.tool(
   },
   async ({ projectId = Config.defaultProjectId, workspaceId }) => {
     try {
-      const params: Record<string, string | undefined> = {
+      const params = buildParams({
         project_id: projectId,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
+        workspace_id: workspaceId,
+      });
 
       const data = await client.get("/query/funnels/list", params);
       return client.formatSuccess(data);
@@ -1528,13 +1490,10 @@ server.tool(
   },
   async ({ projectId = Config.defaultProjectId, workspaceId }) => {
     try {
-      const params: Record<string, string | undefined> = {
+      const params = buildParams({
         project_id: projectId,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
+        workspace_id: workspaceId,
+      });
 
       const data = await client.get("/query/cohorts/list", params);
       return client.formatSuccess(data);
@@ -1570,14 +1529,11 @@ server.tool(
   },
   async ({ projectId = Config.defaultProjectId, workspaceId, bookmarkId }) => {
     try {
-      const params: Record<string, string | undefined> = {
+      const params = buildParams({
         project_id: projectId,
+        workspace_id: workspaceId,
         bookmark_id: bookmarkId,
-      };
-
-      if (workspaceId) {
-        params["workspace_id"] = workspaceId;
-      }
+      });
 
       const data = await client.get("/query/insights", params);
       return client.formatSuccess(data);
@@ -1614,20 +1570,13 @@ server.tool(
       .describe("JSON string of parameters (available as 'params' variable)")
       .optional(),
   },
-  async ({ projectId = Config.defaultProjectId, workspaceId, script, params }) => {
+  async ({ projectId = Config.defaultProjectId, workspaceId, script, params: jqlParams }) => {
     try {
-      const formData = new URLSearchParams();
-      formData.append("script", script);
-      if (params) {
-        formData.append("params", params);
-      }
-
-      const queryParams: Record<string, string | undefined> = {
+      const formData = buildFormData({ script, params: jqlParams });
+      const queryParams = buildParams({
         project_id: projectId,
-      };
-      if (workspaceId) {
-        queryParams["workspace_id"] = workspaceId;
-      }
+        workspace_id: workspaceId,
+      });
 
       const data = await client.post("/query/jql", formData, queryParams);
       return client.formatSuccess(data);
